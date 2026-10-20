@@ -51,7 +51,9 @@ jobs:
           DO_DELETE: ${{ inputs.delete_branch }}
         shell: bash
         run: |
-          set -uo pipefail
+          # `shell: bash` is `bash -eo pipefail`. A grep with no match is a
+          # normal result here; real failures are recorded in `fail`.
+          set +e -uo pipefail
           fail=0
           out() { echo "$*" >> "$GITHUB_STEP_SUMMARY"; echo "$*"; }
           bad() { out "- ❌ $*"; echo "::error::$*"; fail=1; }
@@ -144,8 +146,11 @@ jobs:
             ok "\`${HEAD_REF}\` already deleted"
           else
             deps=$(gh api "repos/${REPO}/pulls?state=open&base=${HEAD_REF}" -q 'map("#\(.number)")|join(" ")' 2>/dev/null || echo "?")
-            default=$(gh api "repos/${REPO}" -q .default_branch)
-            if [ "$HEAD_REF" = "$default" ]; then
+            # This lookup is not otherwise recorded in `fail`. With errexit off,
+            # an API error must still fail the job and must not delete the branch.
+            if ! default=$(gh api "repos/${REPO}" -q .default_branch); then
+              bad "could not read default branch of ${REPO}"
+            elif [ "$HEAD_REF" = "$default" ]; then
               out "- \`${HEAD_REF}\` is the default branch, not deleted"
             elif [ -n "$deps" ]; then
               out "- ⚠️ \`${HEAD_REF}\` kept: open PRs target it (${deps})"
